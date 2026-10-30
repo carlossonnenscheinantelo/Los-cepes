@@ -165,25 +165,37 @@
     });
     return out;
   }
+  // Filas que muestran (o podrían mostrar) foto: las que tienen "__img__" y también las
+  // que no tienen foto, por si se le agregó una desde Claude (se guarda en la nube con el id de la fila).
   function fotosPendientesEnPantalla() {
     var ids = [];
     if (typeof STATE === "undefined" || !STATE) return ids;
     COLS_FOTOS.forEach(function (col) {
       (STATE[col] || []).forEach(function (r) {
-        if (r.comprobante === "__img__") ids.push(r.id);
-        if (r.facturaCompra === "__img__") ids.push(r.id + "_factura");
+        if (r.comprobante === "__img__" || !r.comprobante) ids.push(r.id);
+        if (r.facturaCompra === "__img__" || !r.facturaCompra) ids.push(r.id + "_factura");
       });
     });
     return ids;
+  }
+  function ponerFotos(map) {
+    var n = 0;
+    COLS_FOTOS.forEach(function (col) {
+      (STATE[col] || []).forEach(function (r) {
+        if ((r.comprobante === "__img__" || !r.comprobante) && map[r.id]) { r.comprobante = map[r.id]; n++; }
+        var kf = r.id + "_factura";
+        if ((r.facturaCompra === "__img__" || !r.facturaCompra) && map[kf]) { r.facturaCompra = map[kf]; n++; }
+      });
+    });
+    return n;
   }
   // Completa en memoria las fotos que falten: primero desde IndexedDB, después desde la nube.
   async function completarFotos() {
     var faltan = fotosPendientesEnPantalla();
     if (!faltan.length) return;
     var cache = await idbTodas();
-    var desdeNube = faltan.filter(function (id) { return !cache[id]; });
     var enNube = new Set(((await api("GET", "los_cepes_imgs?select=id")) || []).map(function (r) { return r.id; }));
-    desdeNube = desdeNube.filter(function (id) { return enNube.has(id); });
+    var desdeNube = faltan.filter(function (id) { return !cache[id] && enNube.has(id); });
     for (var i = 0; i < desdeNube.length; i += 10) {
       badge("☁️ Bajando fotos " + Math.min(i + 10, desdeNube.length) + "/" + desdeNube.length + "…", "#f2c94c");
       var lote = desdeNube.slice(i, i + 10).map(function (id) { return '"' + id.replace(/"/g, "") + '"'; }).join(",");
@@ -192,8 +204,8 @@
       (got || []).forEach(function (g) { m[g.id] = g.data; cache[g.id] = g.data; });
       await idbGuardar(m);
     }
-    injectComprobantes(STATE, cache);
-    if (typeof refreshCurrentView === "function") try { refreshCurrentView(); } catch (e) {}
+    var puestas = ponerFotos(cache);
+    if (puestas && typeof refreshCurrentView === "function") try { refreshCurrentView(); } catch (e) {}
   }
 
   /* ---------- helpers de datos ---------- */
@@ -298,6 +310,7 @@
         subir();
       } else {
         badge("☁️ Al día");
+        await completarFotos(); // fotos agregadas desde Claude
       }
     } catch (e) {
       if (String(e.message) === "sin_sesion") pantallaLogin("Tu sesión venció, volvé a entrar.");
