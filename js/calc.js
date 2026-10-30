@@ -129,7 +129,20 @@ function haberProrrateado(montoMensual, fechaIngreso, desde, hasta) {
  * el rango [desde,hasta] de forma continua día a día).
  * Devuelve null si no hay fecha de ingreso cargada (no hay desde cuándo sumar).
  */
-function haberAcumuladoDesdeIngreso(montoMensual, fechaIngreso, hastaISO) {
+/**
+ * Meses en que el trabajador NO devenga sueldo (baja médica, licencia sin goce,
+ * etc.). Se cargan en Personal → Sueldos como texto "AAAA-MM" separados por coma
+ * (ej. "2026-09, 2026-10"). Devuelve un Set de "AAAA-MM".
+ */
+function mesesSinSueldoSet(worker) {
+  const txt = (worker && worker.mesesSinSueldo) || "";
+  return new Set(String(txt).split(/[\s,;]+/).map(x => x.trim()).filter(x => /^\d{4}-\d{2}$/.test(x)));
+}
+function mesSinSueldo(worker, anio, mes) {
+  return mesesSinSueldoSet(worker).has(`${anio}-${String(mes).padStart(2, "0")}`);
+}
+
+function haberAcumuladoDesdeIngreso(montoMensual, fechaIngreso, hastaISO, worker) {
   if (!fechaIngreso) return null;
   const hasta = hastaISO || new Date().toISOString().slice(0, 10);
   if (fechaIngreso > hasta) return 0;
@@ -142,7 +155,15 @@ function haberAcumuladoDesdeIngreso(montoMensual, fechaIngreso, hastaISO) {
   const mesesTotalesIngreso = yIng * 12 + (mIng - 1);
   const mesesTotalesHasta = yHasta * 12 + (mHasta - 1);
   const mesesCompletos = Math.max(0, mesesTotalesHasta - mesesTotalesIngreso);
-  return round2(primerMes + mesesCompletos * montoMensual);
+  // Meses marcados "sin sueldo" (baja médica, etc.) no suman haber.
+  const sinSueldo = mesesSinSueldoSet(worker);
+  let total = sinSueldo.has(`${yIng}-${String(mIng).padStart(2, "0")}`) ? 0 : primerMes;
+  let y = yIng, m = mIng;
+  for (let i = 0; i < mesesCompletos; i++) {
+    m++; if (m > 12) { m = 1; y++; }
+    if (!sinSueldo.has(`${y}-${String(m).padStart(2, "0")}`)) total += montoMensual;
+  }
+  return round2(total);
 }
 
 const MESES_LARGO = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
@@ -158,7 +179,7 @@ const MESES_LARGO = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","A
  * Devuelve [{ anio, mes, mesLabel, desde, hasta, prorrateado, monto }], solo
  * con los meses donde corresponde algún importe (> 0).
  */
-function desglosarHaberPorMes(montoMensual, fechaIngreso, desde, hasta) {
+function desglosarHaberPorMes(montoMensual, fechaIngreso, desde, hasta, worker) {
   if (!desde || !hasta || hasta < desde) return [];
   const filas = [];
   let [y, m] = desde.split("-").map(Number);
@@ -175,7 +196,14 @@ function desglosarHaberPorMes(montoMensual, fechaIngreso, desde, hasta) {
     // trabajado, no un mes "completo" con un importe que no cuadra a simple vista.
     const porIngreso = !!(fechaIngreso && fechaIngreso > limiteDesde);
     const mesDesde = porIngreso ? fechaIngreso : limiteDesde;
-    if (mesDesde <= mesHasta) {
+    if (mesDesde <= mesHasta && mesSinSueldo(worker, y, m)) {
+      filas.push({
+        anio: y, mes: m, mesLabel: `${MESES_LARGO[m - 1]} ${y}`,
+        desde: mesDesde, hasta: mesHasta,
+        prorrateado: false, sinSueldo: true,
+        monto: 0
+      });
+    } else if (mesDesde <= mesHasta) {
       const monto = round2(haberProrrateado(montoMensual, fechaIngreso, mesDesde, mesHasta));
       if (monto > 0) {
         filas.push({
@@ -215,7 +243,7 @@ function calcSueldos(state) {
       // (sin importar si el mes calendario real tiene 28, 29, 30 o 31 días), así un mes
       // completo sin fecha de ingreso de por medio siempre da el costo íntegro del mes.
       const hastaMes = `${anio}-${mm}-30`;
-      costoMensualAnio.push(haberProrrateado(costoTotalMes, e.fechaIngreso, desdeMes, hastaMes));
+      costoMensualAnio.push(mesSinSueldo(e, anio, m) ? 0 : haberProrrateado(costoTotalMes, e.fechaIngreso, desdeMes, hastaMes));
     }
     const costoAnioSinAguinaldo = sum(costoMensualAnio);
     // Meses trabajados en el año (fracción), derivado del mismo prorrateo mensual.

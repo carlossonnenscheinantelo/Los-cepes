@@ -2590,7 +2590,8 @@ function renderPersonal(root) {
         { key: "fechaIngreso", label: "Fecha de ingreso", type: "date" },
         { key: "cantidad", label: "Cant.", type: "number", step: "1", numeric: true, default: 1 },
         { key: "haberBasico", label: "Haber básico (Bs)", type: "number", step: "0.01", numeric: true },
-        { key: "bonoProd", label: "Bono producción (Bs)", type: "number", step: "0.01", numeric: true }
+        { key: "bonoProd", label: "Bono producción (Bs)", type: "number", step: "0.01", numeric: true },
+        { key: "mesesSinSueldo", label: "Meses sin sueldo (baja médica, ej. 2026-09, 2026-10)", type: "text" }
       ],
       extraColumns: [
         { label: "Costo total mes", numeric: true, render: row => {
@@ -2637,7 +2638,7 @@ function renderPersonal(root) {
     // primer sueldo se prorratea por día para nivelarlo al día 1 del mes siguiente;
     // cada mes posterior ya arrancado cuenta completo desde su día 1). Sin fecha de
     // ingreso cargada no hay desde cuándo sumar, así que se avisa en vez de inventar.
-    const haberAcumulado = haberAcumuladoDesdeIngreso(sueldoMes, worker.fechaIngreso, hoyISO());
+    const haberAcumulado = haberAcumuladoDesdeIngreso(sueldoMes, worker.fechaIngreso, hoyISO(), worker);
     const netoAcumulado = haberAcumulado != null ? haberAcumulado - totalDescuentos : null;
 
     if (!uiState.personalDesde) uiState.personalDesde = primerDiaMesISO();
@@ -2725,7 +2726,7 @@ function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
   // trabajador y los límites del período impreso (desde/hasta) — ver
   // desglosarHaberPorMes en calc.js (usa la misma convención de mes de 30 días
   // que haberProrrateado).
-  const desgloseHaber = desglosarHaberPorMes(hb, worker.fechaIngreso, desde, hasta);
+  const desgloseHaber = desglosarHaberPorMes(hb, worker.fechaIngreso, desde, hasta, worker);
   const totalHaber = cant * round2(sum(desgloseHaber.map(f => f.monto)));
   const totalAdelantos = sum(movsPeriodo.map(m => m.adelanto));
   const totalUtensilios = sum(movsPeriodo.map(m => m.utensilios));
@@ -2753,7 +2754,7 @@ function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
         <tbody>
           ${desgloseHaber.length ? desgloseHaber.map(f => `<tr>
               <td>Haber básico — ${escapeHtml(f.mesLabel)}</td>
-              <td>${fmtDate(f.desde)} al ${fmtDate(f.hasta)}${f.prorrateado ? ` <span style="color:#777">(prorrateado, ingreso ${escapeHtml(worker.fechaIngreso)})</span>` : ""}</td>
+              <td>${fmtDate(f.desde)} al ${fmtDate(f.hasta)}${f.prorrateado ? ` <span style="color:#777">(prorrateado, ingreso ${escapeHtml(worker.fechaIngreso)})</span>` : ""}${f.sinSueldo ? ` <span style="color:#b00">(sin sueldo — baja médica)</span>` : ""}</td>
               <td class="num">${fmtMoney2(cant * f.monto)}</td>
             </tr>`).join("") : `<tr><td colspan="3" style="text-align:center;color:#777">Sin haber devengado en este período</td></tr>`}
         </tbody>
