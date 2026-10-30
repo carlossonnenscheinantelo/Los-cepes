@@ -119,65 +119,42 @@
     crudAdd("diario", base);
   }
 
-  // Publica la lista de trabajadores, cuentas y categorías para que Claude sepa
-  // a qué nombres exactos asignar cada comprobante. No sube montos ni movimientos.
-  async function publicarCatalogo() {
-    if (typeof STATE === "undefined") return;
-    try {
-      var data = {
-        trabajadores: (STATE.empleados || []).map(function (e) { return e.cargo; }),
-        cuentas: (STATE.cuentas || []).map(function (c) { return c.nombre; }),
-        categorias: (STATE.categoriasDiario || []).map(function (c) { return { nombre: c.nombre, tipo: c.tipo }; }),
-        subcategorias: STATE.subcategoriasDiario || {}
-      };
-      await fetch(SUPABASE_URL + "/rest/v1/los_cepes_catalogo?on_conflict=id", {
-        method: "POST",
-        headers: headers({ "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal" }),
-        body: JSON.stringify({ id: "main", data: data, updated_at: new Date().toISOString() })
-      });
-    } catch (e) { /* sin conexión: se reintenta en el próximo arranque */ }
-  }
-
   async function poll() {
     if (syncing) return;
     if (typeof STATE === "undefined" || typeof crudAdd !== "function") return; // la app todavía no cargó
     syncing = true;
     try {
+      // "Reclama" las filas pendientes en un solo paso (las marca importadas y las devuelve),
+      // así si la app está abierta en la compu y en el celular a la vez, cada fila
+      // la toma un solo dispositivo y no se duplica.
       var res = await fetch(
-        SUPABASE_URL + "/rest/v1/" + TABLE + "?imported=eq.false&order=created_at.asc&select=*",
-        { headers: headers() }
+        SUPABASE_URL + "/rest/v1/" + TABLE + "?imported=eq.false&order=created_at.asc",
+        {
+          method: "PATCH",
+          headers: headers({ "Content-Type": "application/json", "Prefer": "return=representation" }),
+          body: JSON.stringify({ imported: true, imported_at: new Date().toISOString() })
+        }
       );
       if (!res.ok) throw new Error("http " + res.status);
       var rows = await res.json();
       if (rows && rows.length) {
-        var importedIds = [];
+        rows.sort(function (x, y) { return String(x.created_at).localeCompare(String(y.created_at)); });
+        var ok = 0, fallidas = [];
         for (var i = 0; i < rows.length; i++) {
-          try {
-            importRow(rows[i]);
-            importedIds.push(rows[i].id);
-          } catch (e) {
-            // si una fila puntual falla, seguimos con las demás; queda para el próximo intento
-          }
+          try { importRow(rows[i]); ok++; }
+          catch (e) { fallidas.push(rows[i].id); } // ej. trabajador que no existe: se devuelve a pendiente
         }
-        if (importedIds.length) {
-          await fetch(
-            SUPABASE_URL + "/rest/v1/" + TABLE + "?id=in.(" + importedIds.join(",") + ")",
-            {
-              method: "PATCH",
-              headers: headers({ "Content-Type": "application/json", "Prefer": "return=minimal" }),
-              body: JSON.stringify({ imported: true, imported_at: new Date().toISOString() })
-            }
-          );
+        if (fallidas.length) {
+          await fetch(SUPABASE_URL + "/rest/v1/" + TABLE + "?id=in.(" + fallidas.join(",") + ")", {
+            method: "PATCH",
+            headers: headers({ "Content-Type": "application/json", "Prefer": "return=minimal" }),
+            body: JSON.stringify({ imported: false, imported_at: null })
+          });
+        }
+        if (ok) {
           if (typeof refreshCurrentView === "function") { try { refreshCurrentView(); } catch (e) {} }
-          showIndicator(
-            "Sincronizado: " + importedIds.length + " movimiento" + (importedIds.length === 1 ? "" : "s") + " cargado" + (importedIds.length === 1 ? "" : "s"),
-            true
-          );
-        } else {
-          showIndicator("Sincronizado: al día", true);
+          showIndicator("Sincronizado: " + ok + " movimiento" + (ok === 1 ? "" : "s") + " cargado" + (ok === 1 ? "" : "s"), true);
         }
-      } else {
-        showIndicator("Sincronizado: al día", true);
       }
     } catch (e) {
       showIndicator("Sincronización: sin conexión", true);
@@ -187,8 +164,6 @@
   }
 
   function start() {
-    publicarCatalogo();
-    setInterval(publicarCatalogo, 5 * 60 * 1000);
     poll();
     setInterval(poll, POLL_MS);
   }
