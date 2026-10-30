@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Estancia Los Cepes — Gestión Ganadera</title>
+<link rel="icon" href="assets/logo.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <aside id="sidebar">
+    <div class="brand">
+      <img src="assets/logo.png" alt="Logo" class="brand-logo-img">
+      <div>
+        <div class="brand-title" id="brandTitle">Estancia Los Cepes</div>
+        <div class="brand-sub">Gestión Ganadera</div>
+      </div>
+      <button id="closeSidebar" class="icon-btn only-mobile" aria-label="Cerrar menú">✕</button>
+    </div>
+    <nav id="mainNav">
+      <a href="#/inicio" data-view="inicio">🏠 <span>Inicio</span></a>
+      <a href="#/diario" data-view="diario">📝 <span>Diario</span></a>
+      <a href="#/ganado" data-view="ganado">🐄 <span>Ganado</span></a>
+      <a href="#/personal" data-view="personal">👥 <span>Personal</span></a>
+      <a href="#/almacen" data-view="almacen">🏬 <span>Almacén</span></a>
+      <a href="#/comprobantes" data-view="comprobantes">🧾 <span>Comprobantes</span></a>
+      <a href="#/gastos-fijos" data-view="gastos-fijos">🔒 <span>Gastos Fijos</span></a>
+      <a href="#/gastos-variables" data-view="gastos-variables">📦 <span>Gastos Variables</span></a>
+      <a href="#/financiero" data-view="financiero">📊 <span>Estados Financieros</span></a>
+      <a href="#/analisis" data-view="analisis">📈 <span>Análisis</span></a>
+      <a href="#/configuracion" data-view="configuracion">⚙️ <span>Configuración</span></a>
+      <a href="#/datos" data-view="datos">💾 <span>Datos / Excel</span></a>
+    </nav>
+    <div class="sidebar-footer">
+      <span id="saveIndicator" class="save-indicator">Guardado ✓</span>
+    </div>
+  </aside>
+
+  <div id="overlay"></div>
+
+  <div id="main">
+    <header id="topbar">
+      <button id="openSidebar" class="icon-btn only-mobile" aria-label="Abrir menú">☰</button>
+      <h1 id="viewTitle">Inicio</h1>
+      <div class="topbar-right">
+        <label class="year-picker">Año
+          <select id="yearSelect"></select>
+        </label>
+      </div>
+    </header>
+
+    <main id="appContent"><!-- render.js pinta acá --></main>
+  </div>
+</div>
+
+<div id="printArea"><!-- se llena solo al imprimir una planilla --></div>
+
+<!-- Librerías externas (CDN) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/6.0.1/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+<!-- App -->
+<script src="js/db.js"></script>
+<script src="js/calc.js"></script>
+<script src="js/charts.js"></script>
+<script src="js/render.js"></script>
+<script src="js/main.js"></script>
+<!-- Sincronización con Caja Clara (app personal de gastos) — ver js/sync.js -->
+<script src="js/sync.js"></script>
+</body>
+</html>
