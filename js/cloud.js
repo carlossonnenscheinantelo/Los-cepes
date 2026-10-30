@@ -19,7 +19,7 @@
   var K_SESSION = "losCepesCloud_session";
   var K_VERSION = "losCepesCloud_version";   // última versión de la nube que tiene este dispositivo
   var K_DIRTY   = "losCepesCloud_dirty";     // "1" = hay cambios locales sin subir
-  var K_IMGS_UP = "losCepesCloud_imgsSubidas";
+  var K_IMGS_UP = "losCepesCloud_imgsSubidas"; // (ya no se usa)
   var PULL_MS = 20000;
 
   var ready = false, pushing = false, pushTimer = null, applyingRemote = false;
@@ -122,6 +122,80 @@
     });
   }
 
+  /* ---------- fotos: IndexedDB (sin el límite de ~5 MB de localStorage) ---------- */
+  var COLS_FOTOS = ["diario", "almacenMovimientos", "ganadoMovimiento", "personalMovimientos"];
+  function idb() {
+    return new Promise(function (res, rej) {
+      var rq = indexedDB.open("losCepesFotos", 1);
+      rq.onupgradeneeded = function () { rq.result.createObjectStore("imgs"); };
+      rq.onsuccess = function () { res(rq.result); };
+      rq.onerror = function () { rej(rq.error); };
+    });
+  }
+  async function idbTodas() {
+    try {
+      var d = await idb();
+      return await new Promise(function (res) {
+        var out = {}, tx = d.transaction("imgs", "readonly"), st = tx.objectStore("imgs");
+        var c = st.openCursor();
+        c.onsuccess = function () { var cur = c.result; if (cur) { out[cur.key] = cur.value; cur.continue(); } else res(out); };
+        c.onerror = function () { res(out); };
+      });
+    } catch (e) { return {}; }
+  }
+  async function idbGuardar(map) {
+    try {
+      var d = await idb();
+      await new Promise(function (res) {
+        var tx = d.transaction("imgs", "readwrite"), st = tx.objectStore("imgs");
+        Object.keys(map).forEach(function (k) { st.put(map[k], k); });
+        tx.oncomplete = res; tx.onerror = res; tx.onabort = res;
+      });
+    } catch (e) {}
+  }
+  // fotos que están ahora en memoria (STATE) como data-URL
+  function fotosEnMemoria() {
+    var out = {};
+    if (typeof STATE === "undefined" || !STATE) return out;
+    COLS_FOTOS.forEach(function (col) {
+      (STATE[col] || []).forEach(function (r) {
+        if (r.comprobante && String(r.comprobante).indexOf("data:") === 0) out[r.id] = r.comprobante;
+        if (r.facturaCompra && String(r.facturaCompra).indexOf("data:") === 0) out[r.id + "_factura"] = r.facturaCompra;
+      });
+    });
+    return out;
+  }
+  function fotosPendientesEnPantalla() {
+    var ids = [];
+    if (typeof STATE === "undefined" || !STATE) return ids;
+    COLS_FOTOS.forEach(function (col) {
+      (STATE[col] || []).forEach(function (r) {
+        if (r.comprobante === "__img__") ids.push(r.id);
+        if (r.facturaCompra === "__img__") ids.push(r.id + "_factura");
+      });
+    });
+    return ids;
+  }
+  // Completa en memoria las fotos que falten: primero desde IndexedDB, después desde la nube.
+  async function completarFotos() {
+    var faltan = fotosPendientesEnPantalla();
+    if (!faltan.length) return;
+    var cache = await idbTodas();
+    var desdeNube = faltan.filter(function (id) { return !cache[id]; });
+    var enNube = new Set(((await api("GET", "los_cepes_imgs?select=id")) || []).map(function (r) { return r.id; }));
+    desdeNube = desdeNube.filter(function (id) { return enNube.has(id); });
+    for (var i = 0; i < desdeNube.length; i += 10) {
+      badge("☁️ Bajando fotos " + Math.min(i + 10, desdeNube.length) + "/" + desdeNube.length + "…", "#f2c94c");
+      var lote = desdeNube.slice(i, i + 10).map(function (id) { return '"' + id.replace(/"/g, "") + '"'; }).join(",");
+      var got = await api("GET", "los_cepes_imgs?select=id,data&id=in.(" + encodeURIComponent(lote) + ")");
+      var m = {};
+      (got || []).forEach(function (g) { m[g.id] = g.data; cache[g.id] = g.data; });
+      await idbGuardar(m);
+    }
+    injectComprobantes(STATE, cache);
+    if (typeof refreshCurrentView === "function") try { refreshCurrentView(); } catch (e) {}
+  }
+
   /* ---------- helpers de datos ---------- */
   function hayDatos(st) {
     if (!st) return false;
@@ -135,21 +209,11 @@
   async function aplicarRemoto(row) {
     applyingRemote = true;
     try {
-      // traer fotos que falten en este dispositivo
-      var imgs = loadImages();
-      var lista = await api("GET", "los_cepes_imgs?select=id");
-      var faltan = (lista || []).map(function (r) { return r.id; }).filter(function (id) { return !imgs[id]; });
-      for (var i = 0; i < faltan.length; i += 20) {
-        var lote = faltan.slice(i, i + 20).map(function (id) { return '"' + id.replace(/"/g, "") + '"'; }).join(",");
-        var got = await api("GET", "los_cepes_imgs?select=id,data&id=in.(" + encodeURIComponent(lote) + ")");
-        (got || []).forEach(function (g) { imgs[g.id] = g.data; });
-      }
-      saveImages(imgs);
-      ls(K_IMGS_UP, JSON.stringify(Object.keys(imgs)));
       ls(STORAGE_KEY, JSON.stringify(row.state));
       ls(K_VERSION, String(row.version));
       ls(K_DIRTY, null);
       loadState();
+      await completarFotos();
       if (typeof actualizarMarcaEnPantalla === "function") try { actualizarMarcaEnPantalla(); } catch (e) {}
       if (typeof refreshCurrentView === "function") try { refreshCurrentView(); } catch (e) {}
     } finally {
@@ -158,15 +222,14 @@
   }
 
   async function subirFotos() {
-    var imgs = loadImages();
-    var subidas;
-    try { subidas = new Set(JSON.parse(ls(K_IMGS_UP) || "[]")); } catch (e) { subidas = new Set(); }
-    var nuevas = Object.keys(imgs).filter(function (id) { return !subidas.has(id); });
-    for (var i = 0; i < nuevas.length; i += 5) {
-      var lote = nuevas.slice(i, i + 5).map(function (id) { return { id: id, data: imgs[id] }; });
+    var todas = Object.assign({}, await idbTodas(), loadImages(), fotosEnMemoria());
+    await idbGuardar(fotosEnMemoria());
+    var enNube = new Set(((await api("GET", "los_cepes_imgs?select=id")) || []).map(function (r) { return r.id; }));
+    var nuevas = Object.keys(todas).filter(function (id) { return !enNube.has(id); });
+    for (var i = 0; i < nuevas.length; i += 4) {
+      badge("☁️ Subiendo fotos " + Math.min(i + 4, nuevas.length) + "/" + nuevas.length + "…", "#f2c94c");
+      var lote = nuevas.slice(i, i + 4).map(function (id) { return { id: id, data: todas[id] }; });
       await api("POST", "los_cepes_imgs?on_conflict=id", lote, { "Prefer": "resolution=merge-duplicates,return=minimal" });
-      lote.forEach(function (x) { subidas.add(x.id); });
-      ls(K_IMGS_UP, JSON.stringify(Array.from(subidas)));
     }
   }
 
@@ -271,6 +334,7 @@
       } else {
         await traer();
       }
+      completarFotos().catch(function () {});
       setInterval(traer, PULL_MS);
       document.addEventListener("visibilitychange", function () { if (!document.hidden) traer(); });
       window.addEventListener("online", function () { traer(); });
@@ -290,6 +354,15 @@
       pushTimer = setTimeout(subir, 2000); // saveState escribe en localStorage a los 150 ms
     }
     return r;
+  };
+
+  window.losCepesSubirAhora = async function () {
+    ls(K_DIRTY, "1");
+    clearTimeout(pushTimer);
+    await new Promise(function (r) { setTimeout(r, 400); }); // deja que saveState escriba
+    if (!ready) return;
+    while (pushing) await new Promise(function (r) { setTimeout(r, 300); });
+    await subir();
   };
 
   window.losCepesCerrarSesion = function () { ls(K_SESSION, null); location.reload(); };

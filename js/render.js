@@ -3295,6 +3295,13 @@ function renderDatos(root) {
     try {
       STATE = migrateState(JSON.parse(text));
       saveState(); // saveState separa las imágenes automáticamente
+      // Si la app está conectada a la nube, subir TODO (incluidas las fotos, que se toman
+      // de la memoria y no del navegador, que tiene límite de espacio) antes de recargar.
+      if (typeof window.losCepesSubirAhora === "function") {
+        try { await window.losCepesSubirAhora(); } catch (e2) { console.error(e2); }
+      } else {
+        await new Promise(r => setTimeout(r, 400));
+      }
       location.reload();
     } catch (err) {
       alert("Archivo inválido.");
