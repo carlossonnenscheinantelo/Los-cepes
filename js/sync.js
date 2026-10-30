@@ -59,8 +59,83 @@
       monto: Number(r.monto) || 0,
       cuenta: r.cuenta || "Caja / Efectivo",
       beneficiario: r.beneficiario || "",
-      observaciones: (r.observaciones ? r.observaciones + " " : "") + "(cargado desde Caja Clara)"
+      observaciones: (r.observaciones ? r.observaciones + " " : "") + origenLabel(r),
+      descripcion: r.observaciones || "",
+      numeroComprobante: r.numero_comprobante || "",
+      comprobante: r.comprobante_img || ""
     };
+  }
+
+  function origenLabel(r) {
+    return r.origen === "claude" ? "(cargado desde Claude)" : "(cargado desde Caja Clara)";
+  }
+
+  function norm(s) { return String(s || "").trim().toLowerCase(); }
+
+  function buscarEmpleado(nombre) {
+    var n = norm(nombre);
+    if (!n) return null;
+    var lista = STATE.empleados || [];
+    var hit = lista.find(function (e) { return norm(e.cargo) === n; });
+    if (!hit) hit = lista.find(function (e) { return norm(e.cargo).indexOf(n) >= 0 || n.indexOf(norm(e.cargo)) >= 0; });
+    return hit || null;
+  }
+
+  // Importa una fila de la tabla de sincronización. Si trae trabajador + tipo_personal,
+  // se registra igual que el formulario "Adelantos y consumos de trabajadores":
+  // movimiento en la ficha del trabajador y, si es adelanto, también el egreso en el Diario.
+  // Si no, va directo al Diario (como siempre).
+  function importRow(r) {
+    var base = mapRowToDiario(r);
+    var tp = r.tipo_personal || "";
+    var emp = r.trabajador ? buscarEmpleado(r.trabajador) : null;
+    if (r.trabajador && !emp) throw new Error("trabajador no encontrado: " + r.trabajador);
+
+    if (emp && tp) {
+      var tipoLabel = tp === "adelanto" ? "Adelanto" : tp === "consumo" ? "Víveres / Pedidos" : "Utensilios";
+      crudAdd("personalMovimientos", {
+        empleadoId: emp.id, fecha: base.fecha,
+        concepto: r.observaciones ? tipoLabel + " — " + r.observaciones : tipoLabel,
+        adelanto: tp === "adelanto" ? base.monto : 0,
+        utensilios: tp === "utensilios" ? base.monto : 0,
+        consumo: tp === "consumo" ? base.monto : 0,
+        observacion: origenLabel(r),
+        numeroComprobante: base.numeroComprobante, beneficiario: base.beneficiario,
+        comprobante: base.comprobante, facturaCompra: ""
+      });
+      if (tp === "adelanto") {
+        base.categoria = "Adelanto a Personal";
+        base.subcategoria = emp.cargo;
+        base.descripcion = "Adelanto a " + emp.cargo + (r.observaciones ? " — " + r.observaciones : "");
+        crudAdd("diario", base);
+      }
+      return;
+    }
+    if (emp) {
+      // pago a un trabajador sin descuento de ficha (ej. sueldo): va al Diario con su nombre
+      if (!base.subcategoria) base.subcategoria = emp.cargo;
+      if (!base.beneficiario) base.beneficiario = emp.cargo;
+    }
+    crudAdd("diario", base);
+  }
+
+  // Publica la lista de trabajadores, cuentas y categorías para que Claude sepa
+  // a qué nombres exactos asignar cada comprobante. No sube montos ni movimientos.
+  async function publicarCatalogo() {
+    if (typeof STATE === "undefined") return;
+    try {
+      var data = {
+        trabajadores: (STATE.empleados || []).map(function (e) { return e.cargo; }),
+        cuentas: (STATE.cuentas || []).map(function (c) { return c.nombre; }),
+        categorias: (STATE.categoriasDiario || []).map(function (c) { return { nombre: c.nombre, tipo: c.tipo }; }),
+        subcategorias: STATE.subcategoriasDiario || {}
+      };
+      await fetch(SUPABASE_URL + "/rest/v1/los_cepes_catalogo?on_conflict=id", {
+        method: "POST",
+        headers: headers({ "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates,return=minimal" }),
+        body: JSON.stringify({ id: "main", data: data, updated_at: new Date().toISOString() })
+      });
+    } catch (e) { /* sin conexión: se reintenta en el próximo arranque */ }
   }
 
   async function poll() {
@@ -78,7 +153,7 @@
         var importedIds = [];
         for (var i = 0; i < rows.length; i++) {
           try {
-            crudAdd("diario", mapRowToDiario(rows[i]));
+            importRow(rows[i]);
             importedIds.push(rows[i].id);
           } catch (e) {
             // si una fila puntual falla, seguimos con las demás; queda para el próximo intento
@@ -95,23 +170,25 @@
           );
           if (typeof refreshCurrentView === "function") { try { refreshCurrentView(); } catch (e) {} }
           showIndicator(
-            "Caja Clara: " + importedIds.length + " movimiento" + (importedIds.length === 1 ? "" : "s") + " cargado" + (importedIds.length === 1 ? "" : "s"),
+            "Sincronizado: " + importedIds.length + " movimiento" + (importedIds.length === 1 ? "" : "s") + " cargado" + (importedIds.length === 1 ? "" : "s"),
             true
           );
         } else {
-          showIndicator("Caja Clara: al día", true);
+          showIndicator("Sincronizado: al día", true);
         }
       } else {
-        showIndicator("Caja Clara: al día", true);
+        showIndicator("Sincronizado: al día", true);
       }
     } catch (e) {
-      showIndicator("Caja Clara: sin conexión", true);
+      showIndicator("Sincronización: sin conexión", true);
     } finally {
       syncing = false;
     }
   }
 
   function start() {
+    publicarCatalogo();
+    setInterval(publicarCatalogo, 5 * 60 * 1000);
     poll();
     setInterval(poll, POLL_MS);
   }
