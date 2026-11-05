@@ -2649,7 +2649,7 @@ function renderPersonal(root) {
       <div class="grid cols-4" style="margin-bottom:16px">
         <div class="card kpi"><span class="kpi-label">Haber acumulado (desde ingreso${worker.fechaIngreso ? ` ${fmtDate(worker.fechaIngreso)}` : ""})</span><span class="kpi-value">${haberAcumulado != null ? fmtMoney2(haberAcumulado) : "—"}</span></div>
         <div class="card kpi"><span class="kpi-label">Total descuentos (adelantos/víveres/utensilios)</span><span class="kpi-value neg">${fmtMoney2(totalDescuentos)}</span></div>
-        <div class="card kpi"><span class="kpi-label">Total adeudado a la fecha</span><span class="kpi-value pos">${netoAcumulado != null ? fmtMoney2(netoAcumulado) : "—"}</span></div>
+        <div class="card kpi"><span class="kpi-label">${netoAcumulado != null ? etiquetaSaldo(netoAcumulado) : "Saldo a la fecha"}</span><span class="kpi-value ${netoAcumulado != null && netoAcumulado < 0 ? "neg" : "pos"}">${netoAcumulado != null ? fmtMoney2(Math.abs(netoAcumulado)) : "—"}</span></div>
         <div class="card kpi"><span class="kpi-label">Registros cargados</span><span class="kpi-value">${movs.length}</span></div>
       </div>
       <div class="card tight" style="margin-bottom:16px">
@@ -2721,6 +2721,12 @@ function formaDePagoPlanilla(m) {
   if (/efectivo|entregad|entreado/i.test(texto)) return "Efectivo";
   if ((m.numeroComprobante || "").trim() || /\bqr\b|transf|banco/i.test(texto)) return "Transferencia / QR";
   return "—";
+}
+
+// Saldo del trabajador (Haber − Debe): positivo o cero = la estancia le debe
+// (saldo a favor del trabajador); negativo = el trabajador debe (saldo en contra).
+function etiquetaSaldo(neto) {
+  return neto < 0 ? "Saldo en contra" : "Saldo a favor";
 }
 
 function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
@@ -2852,7 +2858,7 @@ function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
       </table>
 
       <table class="ficha-table ficha-neto">
-        <tbody><tr><td>NETO A PAGAR (Haber − Debe)</td><td class="num">${fmtMoney2(neto)}</td></tr></tbody>
+        <tbody><tr><td>${etiquetaSaldo(neto).toUpperCase()} (Haber − Debe)</td><td class="num" style="${neto < 0 ? "color:#b00;" : ""}">${fmtMoney2(Math.abs(neto))}</td></tr></tbody>
       </table>
 
       <div class="ficha-firmas">
@@ -3034,7 +3040,7 @@ async function descargarFichaPlanillaPDF(worker, movsPeriodo, desde, hasta, boto
     y = doc.lastAutoTable.finalY + 3;
     doc.autoTable(Object.assign({}, estilo, {
       startY: y,
-      body: [[{ content: "NETO A PAGAR (Haber - Debe)", styles: { fontStyle: "bold", fontSize: 11 } }, { content: bs(neto), styles: { halign: "right", fontStyle: "bold", fontSize: 11 } }]],
+      body: [[{ content: `${etiquetaSaldo(neto).toUpperCase()} (Haber - Debe)`, styles: { fontStyle: "bold", fontSize: 11 } }, { content: bs(Math.abs(neto)), styles: { halign: "right", fontStyle: "bold", fontSize: 11, textColor: neto < 0 ? [176, 0, 0] : 20 } }]],
       bodyStyles: { fillColor: [220, 230, 222] },
       columnStyles: { 1: { cellWidth: 40 } }
     }));
