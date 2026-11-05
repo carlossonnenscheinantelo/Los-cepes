@@ -85,6 +85,24 @@
   // se registra igual que el formulario "Adelantos y consumos de trabajadores":
   // movimiento en la ficha del trabajador y, si es adelanto, también el egreso en el Diario.
   // Si no, va directo al Diario (como siempre).
+  // Concepto que se ve en la planilla del trabajador. En pulpería (víveres /
+  // utensilios) SIEMPRE lleva el artículo que se le cobra (viene en
+  // "subcategoria"); antes solo se usaba "observaciones" y quedaban cargos
+  // que decían "Pulpería" sin decir qué era.
+  function conceptoPersonal(tipoLabel, tp, r) {
+    var obs = String(r.observaciones || "").trim();
+    var item = String(r.subcategoria || "").trim();
+    var yaDice = item && (obs.toLowerCase().indexOf(item.toLowerCase()) >= 0 || (/^varios/i.test(item) && /^varios/i.test(obs)));
+    if (tp !== "adelanto" && item && !yaDice) {
+      if (/^pulper[ií]a/i.test(obs)) {
+        var resto = obs.replace(/^pulper[ií]a:?\s*/i, "");
+        return tipoLabel + " — Pulpería: " + item + (resto ? " " + resto : "");
+      }
+      return tipoLabel + " — " + item + (obs ? " (" + obs + ")" : "");
+    }
+    return obs ? tipoLabel + " — " + obs : tipoLabel;
+  }
+
   function importRow(r) {
     var base = mapRowToDiario(r);
     var tp = r.tipo_personal || "";
@@ -95,7 +113,7 @@
       var tipoLabel = tp === "adelanto" ? "Adelanto" : tp === "consumo" ? "Víveres / Pedidos" : "Utensilios";
       crudAdd("personalMovimientos", {
         empleadoId: emp.id, fecha: base.fecha,
-        concepto: r.observaciones ? tipoLabel + " — " + r.observaciones : tipoLabel,
+        concepto: conceptoPersonal(tipoLabel, tp, r),
         adelanto: tp === "adelanto" ? base.monto : 0,
         utensilios: tp === "utensilios" ? base.monto : 0,
         consumo: tp === "consumo" ? base.monto : 0,
