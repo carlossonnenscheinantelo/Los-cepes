@@ -2665,11 +2665,14 @@ function renderPersonal(root) {
     `;
     wHost.querySelector("#planDesde").addEventListener("change", e => { uiState.personalDesde = e.target.value; });
     wHost.querySelector("#planHasta").addEventListener("change", e => { uiState.personalHasta = e.target.value; });
+    // Si "Desde" es la fecha de ingreso (o antes), también entran los adelantos
+    // que se le dieron ANTES de empezar a trabajar: si no, quedaban afuera y el
+    // saldo salía mal.
     wHost.querySelector("#btnImprimirPlanilla").addEventListener("click", () => {
       const desde = wHost.querySelector("#planDesde").value;
       const hasta = wHost.querySelector("#planHasta").value;
       const movsPeriodo = STATE.personalMovimientos
-        .filter(m => m.empleadoId === worker.id && (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta))
+        .filter(m => m.empleadoId === worker.id && (!desde || m.fecha >= desde || (worker.fechaIngreso && desde <= worker.fechaIngreso)) && (!hasta || m.fecha <= hasta))
         .sort((a,b) => (a.fecha||"").localeCompare(b.fecha||""));
       imprimirFichaPlanilla(buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta));
     });
@@ -2677,7 +2680,7 @@ function renderPersonal(root) {
       const desde = wHost.querySelector("#planDesde").value;
       const hasta = wHost.querySelector("#planHasta").value;
       const movsPeriodo = STATE.personalMovimientos
-        .filter(m => m.empleadoId === worker.id && (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta))
+        .filter(m => m.empleadoId === worker.id && (!desde || m.fecha >= desde || (worker.fechaIngreso && desde <= worker.fechaIngreso)) && (!hasta || m.fecha <= hasta))
         .sort((a,b) => (a.fecha||"").localeCompare(b.fecha||""));
       descargarFichaPlanillaPDF(worker, movsPeriodo, desde, hasta, ev.target);
     });
