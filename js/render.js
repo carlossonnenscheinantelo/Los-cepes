@@ -2679,7 +2679,7 @@ function renderPersonal(root) {
       const movsPeriodo = STATE.personalMovimientos
         .filter(m => m.empleadoId === worker.id && (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta))
         .sort((a,b) => (a.fecha||"").localeCompare(b.fecha||""));
-      descargarFichaPlanillaPDF(worker, buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta), desde, hasta, ev.target);
+      descargarFichaPlanillaPDF(worker, movsPeriodo, desde, hasta, ev.target);
     });
 
     mountCrudTable(wHost.querySelector("#movTableHost"), {
@@ -2886,64 +2886,202 @@ function nombreArchivoPlanillaPDF(worker, desde, hasta) {
 }
 
 /**
- * Genera y descarga la planilla (el mismo HTML de debe/haber que arma
- * buildFichaPlanillaHTML para "Imprimir") como archivo PDF, usando html2pdf.js
- * (html2canvas + jsPDF) cargado desde CDN en index.html. La muestra un
- * instante como overlay a pantalla completa (necesario para que html2canvas
- * la capture bien) y la oculta de nuevo apenas termina la descarga.
+ * Genera y descarga la planilla de debe y haber como PDF ARMADO DIRECTO CON
+ * LOS DATOS (jsPDF + jspdf-autotable, cargados desde CDN en index.html).
+ * Antes se "fotografiaba" la pantalla con html2pdf/html2canvas y en varios
+ * equipos (sobre todo en el celular) el PDF salía EN BLANCO; armándolo con
+ * los datos no depende de lo que se ve en pantalla y sale siempre igual.
+ * Mismo contenido y mismos totales que buildFichaPlanillaHTML (Imprimir):
+ * HABER por mes, (1) pagos, (2) pulpería, (3) créditos a favor, neto y firmas.
  */
-function descargarFichaPlanillaPDF(worker, html, desde, hasta, botonOrigen) {
-  if (typeof html2pdf === "undefined") {
-    alert("No se pudo cargar el generador de PDF (revisá tu conexión a internet e intentá de nuevo).");
+async function descargarFichaPlanillaPDF(worker, movsPeriodo, desde, hasta, botonOrigen) {
+  const JsPDF = window.jspdf && window.jspdf.jsPDF;
+  if (!JsPDF) {
+    alert("No se pudo cargar el generador de PDF (revisá tu conexión a internet e intentá de nuevo). Mientras tanto podés usar '🖨️ Imprimir planilla' → 'Guardar como PDF'.");
     return;
   }
-  let pdfArea = document.getElementById("pdfArea");
-  if (!pdfArea) {
-    pdfArea = document.createElement("div");
-    pdfArea.id = "pdfArea";
-    document.body.appendChild(pdfArea);
-  }
-  // Se muestra tapando toda la pantalla (fondo blanco) mientras se genera el
-  // PDF — es exactamente el mismo HTML que la planilla de "Imprimir", así que
-  // el PDF descargado sale igual. IMPORTANTE: html2canvas necesita que el
-  // elemento esté realmente visible para poder capturarlo; escondiéndolo con
-  // "left:-9999px" (como estaba antes) o con "display:none" (heredado del
-  // CSS por defecto) el PDF salía en blanco. Además, html2canvas tiene un bug
-  // conocido con "position:fixed": si la página está scrolleada al momento de
-  // capturar (lo normal, porque el botón está más abajo), calcula mal el
-  // recorte y también sale en blanco. Por eso forzamos scroll a 0,0 ANTES de
-  // mostrar el overlay, y usamos scrollX/scrollY:0 en html2canvas como
-  // refuerzo. Se oculta de nuevo apenas termina de descargar.
-  window.scrollTo(0, 0);
-  pdfArea.style.cssText = "display:block;position:fixed;inset:0;z-index:99999;background:#fff;overflow:auto;padding:24px;box-sizing:border-box;";
-  pdfArea.innerHTML = html;
-
   const textoOriginal = botonOrigen ? botonOrigen.textContent : null;
   if (botonOrigen) { botonOrigen.disabled = true; botonOrigen.textContent = "Generando PDF…"; }
+  try {
+    const n = v => Number(v) || 0;
+    const bs = v => fmtMoney2(v);
+    const cant = n(worker.cantidad);
+    const hb = n(worker.haberBasico);
+    const desgloseHaber = desglosarHaberPorMes(hb, worker.fechaIngreso, desde, hasta, worker);
+    const totalHaber = cant * round2(sum(desgloseHaber.map(f => f.monto)));
+    const porFecha = (a, b) => (a.fecha || "").localeCompare(b.fecha || "");
+    const pagos = movsPeriodo.filter(m => n(m.adelanto) > 0).slice().sort(porFecha);
+    const pulperia = movsPeriodo.filter(m => n(m.consumo) + n(m.utensilios) > 0).slice().sort(porFecha);
+    const creditos = movsPeriodo.filter(m => n(m.adelanto) < 0).slice().sort(porFecha);
+    const totalPagos = sum(pagos.map(m => n(m.adelanto)));
+    const totalConsumo = sum(movsPeriodo.map(m => n(m.consumo)));
+    const totalUtensilios = sum(movsPeriodo.map(m => n(m.utensilios)));
+    const totalPulperia = totalConsumo + totalUtensilios;
+    const totalCreditos = sum(creditos.map(m => -n(m.adelanto)));
+    const totalDebe = totalPagos + totalPulperia - totalCreditos;
+    const neto = totalHaber - totalDebe;
 
-  const ocultarPdfArea = () => {
-    pdfArea.style.cssText = "display:none;";
-    pdfArea.innerHTML = "";
+    const doc = new JsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    const W = doc.internal.pageSize.getWidth();
+    const M = 12;
+    const verde = [47, 93, 58];
+    const estilo = {
+      theme: "grid",
+      styles: { fontSize: 8.5, cellPadding: 1.6, lineColor: [160, 160, 160], lineWidth: 0.2, textColor: 20, valign: "middle" },
+      headStyles: { fillColor: [235, 235, 235], textColor: 20, fontStyle: "bold" },
+      footStyles: { fillColor: [246, 246, 246], textColor: 20, fontStyle: "bold" },
+      margin: { left: M, right: M }
+    };
+    let y = M;
+
+    // Encabezado con logo (si se puede cargar)
+    try {
+      const logo = await imagenComoDataURL("assets/logo.png");
+      if (logo) doc.addImage(logo, "PNG", M, y, 16, 16);
+    } catch (e) { /* sin logo, sigue igual */ }
+    doc.setFont("helvetica", "bold"); doc.setFontSize(15); doc.setTextColor(...verde);
+    doc.text(String(STATE.meta.nombreEstancia || "Estancia"), W / 2, y + 6, { align: "center" });
+    doc.setFontSize(11.5); doc.setTextColor(20);
+    doc.text("Planilla de Debe y Haber", W / 2, y + 12, { align: "center" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+    doc.text(`Trabajador: ${worker.cargo || ""}   |   Período: ${fmtDate(desde)} al ${fmtDate(hasta)}   |   Emitido: ${new Date().toLocaleDateString("es-BO")}`, W / 2, y + 18, { align: "center" });
+    y += 24;
+
+    const tabla = (titulo, head, body, foot, extra) => {
+      doc.autoTable(Object.assign({}, estilo, {
+        startY: y,
+        head: [[{ content: titulo, colSpan: head.length, styles: { halign: "center", fillColor: [220, 230, 222] } }], head],
+        body: body.length ? body : [[{ content: "Sin movimientos en este período", colSpan: head.length, styles: { halign: "center", textColor: 120 } }]],
+        foot: foot ? [foot] : undefined
+      }, extra || {}));
+      y = doc.lastAutoTable.finalY + 5;
+    };
+    const num = { halign: "right" };
+
+    // HABER
+    tabla(
+      "HABER — Sueldo devengado por mes",
+      ["Mes", "Período cubierto", { content: `Importe (x${cant})`, styles: num }],
+      desgloseHaber.map(f => [
+        `Haber básico — ${f.mesLabel}`,
+        `${fmtDate(f.desde)} al ${fmtDate(f.hasta)}${f.prorrateado ? ` (prorrateado, ingreso ${fmtDate(worker.fechaIngreso)})` : ""}${f.sinSueldo ? " (sin sueldo — baja médica)" : ""}`,
+        { content: bs(cant * f.monto), styles: num }
+      ]),
+      [{ content: "TOTAL HABER", colSpan: 2 }, { content: bs(totalHaber), styles: num }]
+    );
+
+    // (1) PAGOS — con foto del comprobante si la hay
+    const fotos = pagos.map(m => (typeof m.comprobante === "string" && m.comprobante.startsWith("data:image")) ? m.comprobante : null);
+    tabla(
+      "DEBE (1) — Pagos entregados (transferencia / QR o efectivo)",
+      ["Fecha", "Concepto", "Forma de pago", "Nº Comprobante", "Foto", { content: "Monto", styles: num }],
+      pagos.map((m, i) => [
+        fmtDate(m.fecha),
+        `${m.concepto || ""}${m.beneficiario ? `\nA: ${m.beneficiario}` : ""}`,
+        formaDePagoPlanilla(m),
+        m.numeroComprobante || "—",
+        fotos[i] ? "" : "—",
+        { content: bs(m.adelanto), styles: num }
+      ]),
+      [{ content: "TOTAL PAGOS", colSpan: 5 }, { content: bs(totalPagos), styles: num }],
+      {
+        columnStyles: { 0: { cellWidth: 19 }, 2: { cellWidth: 25 }, 3: { cellWidth: 24 }, 4: { cellWidth: 13 }, 5: { cellWidth: 22 } },
+        bodyStyles: { minCellHeight: 11 },
+        didDrawCell: d => {
+          if (d.section !== "body" || d.column.index !== 4 || !pagos.length) return;
+          const img = fotos[d.row.index];
+          if (!img) return;
+          const tipo = img.startsWith("data:image/png") ? "PNG" : "JPEG";
+          try { doc.addImage(img, tipo, d.cell.x + 1.5, d.cell.y + 1, 10, Math.min(10, d.cell.height - 2)); } catch (e) {}
+        }
+      }
+    );
+
+    // (2) PULPERÍA
+    tabla(
+      "DEBE (2) — Pulpería (víveres / pedidos y utensilios)",
+      ["Fecha", "Detalle", { content: "Víveres/Pedidos", styles: num }, { content: "Utensilios", styles: num }, { content: "Total", styles: num }],
+      pulperia.map(m => [
+        fmtDate(m.fecha), m.concepto || "",
+        { content: n(m.consumo) ? bs(m.consumo) : "—", styles: num },
+        { content: n(m.utensilios) ? bs(m.utensilios) : "—", styles: num },
+        { content: bs(n(m.consumo) + n(m.utensilios)), styles: num }
+      ]),
+      [{ content: "TOTAL PULPERÍA", colSpan: 2 }, { content: bs(totalConsumo), styles: num }, { content: bs(totalUtensilios), styles: num }, { content: bs(totalPulperia), styles: num }],
+      { columnStyles: { 0: { cellWidth: 19 }, 2: { cellWidth: 26 }, 3: { cellWidth: 22 }, 4: { cellWidth: 22 } } }
+    );
+
+    // (3) CRÉDITOS (solo si hay)
+    if (creditos.length) {
+      tabla(
+        "(3) Créditos a favor del trabajador (cubiertos por la empresa)",
+        ["Fecha", "Concepto", { content: "Monto", styles: num }],
+        creditos.map(m => [fmtDate(m.fecha), m.concepto || "", { content: bs(-n(m.adelanto)), styles: num }]),
+        [{ content: "TOTAL CRÉDITOS", colSpan: 2 }, { content: bs(totalCreditos), styles: num }],
+        { columnStyles: { 0: { cellWidth: 19 }, 2: { cellWidth: 26 } } }
+      );
+    }
+
+    // RESUMEN + NETO
+    const resumen = [
+      ["(1) Total pagos", { content: bs(totalPagos), styles: num }],
+      ["(2) Total pulpería", { content: bs(totalPulperia), styles: num }]
+    ];
+    if (totalCreditos) resumen.push(["(3) Menos créditos a favor", { content: "-" + bs(totalCreditos), styles: num }]);
+    resumen.push([{ content: "TOTAL DEBE", styles: { fontStyle: "bold" } }, { content: bs(totalDebe), styles: { halign: "right", fontStyle: "bold" } }]);
+    resumen.push([{ content: "TOTAL HABER", styles: { fontStyle: "bold" } }, { content: bs(totalHaber), styles: { halign: "right", fontStyle: "bold" } }]);
+    doc.autoTable(Object.assign({}, estilo, { startY: y, body: resumen, columnStyles: { 1: { cellWidth: 40 } } }));
+    y = doc.lastAutoTable.finalY + 3;
+    doc.autoTable(Object.assign({}, estilo, {
+      startY: y,
+      body: [[{ content: "NETO A PAGAR (Haber - Debe)", styles: { fontStyle: "bold", fontSize: 11 } }, { content: bs(neto), styles: { halign: "right", fontStyle: "bold", fontSize: 11 } }]],
+      bodyStyles: { fillColor: [220, 230, 222] },
+      columnStyles: { 1: { cellWidth: 40 } }
+    }));
+    y = doc.lastAutoTable.finalY;
+
+    // Firmas (pasa a otra hoja si no entran)
+    const H = doc.internal.pageSize.getHeight();
+    if (y + 35 > H - M) { doc.addPage(); y = M; }
+    y += 25;
+    doc.setDrawColor(60); doc.setLineWidth(0.3);
+    doc.line(M + 5, y, M + 70, y);
+    doc.line(W - M - 70, y, W - M - 5, y);
+    doc.setFontSize(9);
+    doc.text("Firma Empleador", M + 37.5, y + 5, { align: "center" });
+    doc.text("Firma Trabajador", W - M - 37.5, y + 5, { align: "center" });
+
+    // Número de página
+    const paginas = doc.getNumberOfPages();
+    for (let i = 1; i <= paginas; i++) {
+      doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(120);
+      doc.text(`Página ${i} de ${paginas}`, W - M, H - 6, { align: "right" });
+    }
+
+    doc.save(nombreArchivoPlanillaPDF(worker, desde, hasta));
+  } catch (err) {
+    console.error("Error generando PDF:", err);
+    alert("No se pudo generar el PDF. Probá de nuevo, o usá '🖨️ Imprimir planilla' y elegí 'Guardar como PDF' desde el diálogo de impresión.");
+  } finally {
     if (botonOrigen) { botonOrigen.disabled = false; botonOrigen.textContent = textoOriginal; }
-  };
+  }
+}
 
-  // Esperamos al próximo frame para asegurarnos de que el navegador ya
-  // aplicó el scroll a 0,0 y el reflow del overlay antes de que html2canvas
-  // empiece a clonar el DOM (si captura en el mismo tick, a veces agarra
-  // coordenadas viejas y sale en blanco).
-  requestAnimationFrame(() => {
-    html2pdf().set({
-      margin: 10,
-      filename: nombreArchivoPlanillaPDF(worker, desde, hasta),
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: "#ffffff", scrollX: 0, scrollY: 0, windowWidth: document.documentElement.clientWidth, windowHeight: document.documentElement.clientHeight },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      pagebreak: { mode: ["avoid-all", "css", "legacy"] }
-    }).from(pdfArea).save().then(ocultarPdfArea).catch(err => {
-      console.error("Error generando PDF:", err);
-      alert("No se pudo generar el PDF. Probá de nuevo, o usá '🖨️ Imprimir planilla' y elegí 'Guardar como PDF' desde el diálogo de impresión.");
-      ocultarPdfArea();
-    });
+// Carga una imagen (ej. el logo) y la devuelve como data URL, para poder
+// meterla en el PDF. Devuelve null si no se pudo.
+function imagenComoDataURL(src) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const c = document.createElement("canvas");
+        c.width = img.naturalWidth; c.height = img.naturalHeight;
+        c.getContext("2d").drawImage(img, 0, 0);
+        resolve(c.toDataURL("image/png"));
+      } catch (e) { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
   });
 }
 
