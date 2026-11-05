@@ -2713,6 +2713,16 @@ function primerDiaMesISO() {
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-01`;
 }
 
+// Forma de pago de un adelanto, para la planilla impresa: si tiene número de
+// comprobante o el texto habla de QR/transferencia/banco, es transferencia;
+// si habla de efectivo/entrega, es efectivo. Si no hay ninguna pista, "—".
+function formaDePagoPlanilla(m) {
+  const texto = `${m.concepto || ""} ${m.observacion || ""} ${m.beneficiario || ""}`;
+  if (/efectivo|entregad|entreado/i.test(texto)) return "Efectivo";
+  if ((m.numeroComprobante || "").trim() || /\bqr\b|transf|banco/i.test(texto)) return "Transferencia / QR";
+  return "—";
+}
+
 function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
   // Nota: el bono de producción NO se muestra ni se suma en esta planilla impresa
   // (a pedido del usuario) — el trabajador cobra y firma acá solo por su haber básico.
@@ -2734,6 +2744,14 @@ function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
   const totalDebe = totalAdelantos + totalUtensilios + totalConsumo;
   const neto = totalHaber - totalDebe;
   const hoy = new Date().toLocaleDateString("es-BO");
+  // El DEBE se muestra en dos bloques (a pedido del usuario): primero todos los
+  // PAGOS entregados al trabajador (adelantos por transferencia/QR o en
+  // efectivo) y después todo lo de PULPERÍA (víveres/pedidos y utensilios).
+  // Cada bloque va ordenado por fecha. Un registro con ambos importes aparece
+  // en los dos bloques, cada uno con su parte.
+  const porFecha = (a, b) => (a.fecha || "").localeCompare(b.fecha || "");
+  const pagos = movsPeriodo.filter(m => (Number(m.adelanto) || 0) > 0).slice().sort(porFecha);
+  const pulperia = movsPeriodo.filter(m => ((Number(m.consumo) || 0) + (Number(m.utensilios) || 0)) > 0).slice().sort(porFecha);
 
   return `
     <div class="ficha">
@@ -2763,30 +2781,53 @@ function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
 
       <table class="ficha-table">
         <thead>
-          <tr><th colspan="7">DEBE — Adelantos y consumos del período</th></tr>
-          <tr><th>Fecha</th><th>Concepto</th><th class="num">Adelanto</th><th class="num">Víveres/Pedidos</th><th class="num">Utensilios</th><th>Nº Comprobante</th><th>Foto</th></tr>
+          <tr><th colspan="6">DEBE (1) — Pagos entregados (transferencia / QR o efectivo)</th></tr>
+          <tr><th>Fecha</th><th>Concepto</th><th>Forma de pago</th><th>Nº Comprobante</th><th>Foto</th><th class="num">Monto</th></tr>
         </thead>
         <tbody>
-          ${movsPeriodo.length ? movsPeriodo.map(m => `<tr>
+          ${pagos.length ? pagos.map(m => `<tr>
               <td>${fmtDate(m.fecha)}</td>
-              <td>${escapeHtml(m.concepto || "")}</td>
-              <td class="num">${(Number(m.adelanto)||0) ? fmtMoney2(m.adelanto) : "—"}</td>
-              <td class="num">${(Number(m.consumo)||0) ? fmtMoney2(m.consumo) : "—"}</td>
-              <td class="num">${(Number(m.utensilios)||0) ? fmtMoney2(m.utensilios) : "—"}</td>
+              <td>${escapeHtml(m.concepto || "")}${m.beneficiario ? `<br><span style="color:#777">A: ${escapeHtml(m.beneficiario)}</span>` : ""}</td>
+              <td>${formaDePagoPlanilla(m)}</td>
               <td>${escapeHtml(m.numeroComprobante || "—")}</td>
               <td>${m.comprobante ? `<img src="${m.comprobante}" class="ficha-thumb">` : "—"}</td>
-            </tr>`).join("") : `<tr><td colspan="7" style="text-align:center;color:#777">Sin movimientos en este período</td></tr>`}
+              <td class="num">${fmtMoney2(m.adelanto)}</td>
+            </tr>`).join("") : `<tr><td colspan="6" style="text-align:center;color:#777">Sin pagos en este período</td></tr>`}
+        </tbody>
+        <tfoot><tr><td colspan="5">TOTAL PAGOS</td><td class="num">${fmtMoney2(totalAdelantos)}</td></tr></tfoot>
+      </table>
+
+      <table class="ficha-table">
+        <thead>
+          <tr><th colspan="5">DEBE (2) — Pulpería (víveres / pedidos y utensilios)</th></tr>
+          <tr><th>Fecha</th><th>Detalle</th><th class="num">Víveres/Pedidos</th><th class="num">Utensilios</th><th class="num">Total</th></tr>
+        </thead>
+        <tbody>
+          ${pulperia.length ? pulperia.map(m => `<tr>
+              <td>${fmtDate(m.fecha)}</td>
+              <td>${escapeHtml(m.concepto || "")}</td>
+              <td class="num">${(Number(m.consumo)||0) ? fmtMoney2(m.consumo) : "—"}</td>
+              <td class="num">${(Number(m.utensilios)||0) ? fmtMoney2(m.utensilios) : "—"}</td>
+              <td class="num">${fmtMoney2((Number(m.consumo)||0) + (Number(m.utensilios)||0))}</td>
+            </tr>`).join("") : `<tr><td colspan="5" style="text-align:center;color:#777">Sin pulpería en este período</td></tr>`}
         </tbody>
         <tfoot>
           <tr>
             <td colspan="2">Subtotales</td>
-            <td class="num">${fmtMoney2(totalAdelantos)}</td>
             <td class="num">${fmtMoney2(totalConsumo)}</td>
             <td class="num">${fmtMoney2(totalUtensilios)}</td>
-            <td></td>
+            <td class="num">${fmtMoney2(totalConsumo + totalUtensilios)}</td>
           </tr>
-          <tr><td colspan="5">TOTAL DEBE</td><td class="num">${fmtMoney2(totalDebe)}</td></tr>
+          <tr><td colspan="4">TOTAL PULPERÍA</td><td class="num">${fmtMoney2(totalConsumo + totalUtensilios)}</td></tr>
         </tfoot>
+      </table>
+
+      <table class="ficha-table">
+        <tbody>
+          <tr><td>(1) Total pagos</td><td class="num">${fmtMoney2(totalAdelantos)}</td></tr>
+          <tr><td>(2) Total pulpería</td><td class="num">${fmtMoney2(totalConsumo + totalUtensilios)}</td></tr>
+          <tr><td><b>TOTAL DEBE</b></td><td class="num"><b>${fmtMoney2(totalDebe)}</b></td></tr>
+        </tbody>
       </table>
 
       <table class="ficha-table ficha-neto">
