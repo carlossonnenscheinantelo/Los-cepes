@@ -2738,10 +2738,14 @@ function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
   // que haberProrrateado).
   const desgloseHaber = desglosarHaberPorMes(hb, worker.fechaIngreso, desde, hasta, worker);
   const totalHaber = cant * round2(sum(desgloseHaber.map(f => f.monto)));
-  const totalAdelantos = sum(movsPeriodo.map(m => m.adelanto));
+  // Un "adelanto" NEGATIVO es un CRÉDITO a favor del trabajador (algo que la
+  // empresa asume y le descuenta de lo que debe, ej. un gasto que cubre el
+  // jefe). Se muestra en su propio bloque y resta del DEBE.
+  const totalAdelantos = sum(movsPeriodo.map(m => Math.max(0, Number(m.adelanto) || 0)));
+  const totalCreditos = sum(movsPeriodo.map(m => Math.max(0, -(Number(m.adelanto) || 0))));
   const totalUtensilios = sum(movsPeriodo.map(m => m.utensilios));
   const totalConsumo = sum(movsPeriodo.map(m => m.consumo));
-  const totalDebe = totalAdelantos + totalUtensilios + totalConsumo;
+  const totalDebe = totalAdelantos + totalUtensilios + totalConsumo - totalCreditos;
   const neto = totalHaber - totalDebe;
   const hoy = new Date().toLocaleDateString("es-BO");
   // El DEBE se muestra en dos bloques (a pedido del usuario): primero todos los
@@ -2752,6 +2756,7 @@ function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
   const porFecha = (a, b) => (a.fecha || "").localeCompare(b.fecha || "");
   const pagos = movsPeriodo.filter(m => (Number(m.adelanto) || 0) > 0).slice().sort(porFecha);
   const pulperia = movsPeriodo.filter(m => ((Number(m.consumo) || 0) + (Number(m.utensilios) || 0)) > 0).slice().sort(porFecha);
+  const creditos = movsPeriodo.filter(m => (Number(m.adelanto) || 0) < 0).slice().sort(porFecha);
 
   return `
     <div class="ficha">
@@ -2822,10 +2827,26 @@ function buildFichaPlanillaHTML(worker, movsPeriodo, desde, hasta) {
         </tfoot>
       </table>
 
+      ${creditos.length ? `<table class="ficha-table">
+        <thead>
+          <tr><th colspan="3">(3) Créditos a favor del trabajador (cubiertos por la empresa)</th></tr>
+          <tr><th>Fecha</th><th>Concepto</th><th class="num">Monto</th></tr>
+        </thead>
+        <tbody>
+          ${creditos.map(m => `<tr>
+              <td>${fmtDate(m.fecha)}</td>
+              <td>${escapeHtml(m.concepto || "")}</td>
+              <td class="num">${fmtMoney2(-(Number(m.adelanto) || 0))}</td>
+            </tr>`).join("")}
+        </tbody>
+        <tfoot><tr><td colspan="2">TOTAL CRÉDITOS</td><td class="num">${fmtMoney2(totalCreditos)}</td></tr></tfoot>
+      </table>` : ""}
+
       <table class="ficha-table">
         <tbody>
           <tr><td>(1) Total pagos</td><td class="num">${fmtMoney2(totalAdelantos)}</td></tr>
           <tr><td>(2) Total pulpería</td><td class="num">${fmtMoney2(totalConsumo + totalUtensilios)}</td></tr>
+          ${totalCreditos ? `<tr><td>(3) Menos créditos a favor</td><td class="num">-${fmtMoney2(totalCreditos)}</td></tr>` : ""}
           <tr><td><b>TOTAL DEBE</b></td><td class="num"><b>${fmtMoney2(totalDebe)}</b></td></tr>
         </tbody>
       </table>
