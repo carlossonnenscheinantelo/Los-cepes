@@ -3081,8 +3081,11 @@ function imagenComoDataURL(src) {
     img.onload = () => {
       try {
         const c = document.createElement("canvas");
-        c.width = img.naturalWidth; c.height = img.naturalHeight;
-        c.getContext("2d").drawImage(img, 0, 0);
+        // Se achica a 160 px de ancho máx.: en el PDF el logo mide 16 mm, y a
+        // tamaño original el archivo pesaba varios MB.
+        const escala = Math.min(1, 160 / (img.naturalWidth || 160));
+        c.width = Math.round(img.naturalWidth * escala); c.height = Math.round(img.naturalHeight * escala);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
         resolve(c.toDataURL("image/png"));
       } catch (e) { resolve(null); }
     };
