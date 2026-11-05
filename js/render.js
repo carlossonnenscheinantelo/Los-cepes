@@ -2939,6 +2939,7 @@ async function descargarFichaPlanillaPDF(worker, movsPeriodo, desde, hasta, boto
       styles: { fontSize: 8.5, cellPadding: 1.6, lineColor: [160, 160, 160], lineWidth: 0.2, textColor: 20, valign: "middle" },
       headStyles: { fillColor: [235, 235, 235], textColor: 20, fontStyle: "bold" },
       footStyles: { fillColor: [246, 246, 246], textColor: 20, fontStyle: "bold" },
+      showFoot: "lastPage", // el total sale una sola vez, al final de la tabla
       margin: { left: M, right: M }
     };
     let y = M;
