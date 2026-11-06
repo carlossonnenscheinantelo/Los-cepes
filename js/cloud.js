@@ -378,6 +378,8 @@
     await subir();
   };
 
+  window.losCepesToken = token; // lo usa el asistente (js/chat.js)
+
   window.losCepesCerrarSesion = function () { ls(K_SESSION, null); location.reload(); };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", function () { setTimeout(arrancar, 300); });
