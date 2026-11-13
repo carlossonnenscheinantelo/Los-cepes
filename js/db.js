@@ -225,7 +225,10 @@ function defaultState() {
     // Trabajos sanitarios aplicados a una categoría/tropa de ganado (cabecera del evento).
     // Los productos de Sanidad/Nutrición realmente usados se guardan como almacenMovimientos
     // de tipo "consumo" con trabajoSanitarioId apuntando acá (así se descuentan solos del stock).
-    trabajosSanitarios: [] // { id, fecha, categoriaGanadoId, cabezas, tipoTrabajoId, observaciones }
+    trabajosSanitarios: [], // { id, fecha, categoriaGanadoId, cabezas, tipoTrabajoId, observaciones }
+    // Ventas a Matadero (ver js/ventas-matadero.js): control de cobro de las ventas de vacas al matadero.
+    ventasMatadero: [], // { id, venta (Nº), fecha, tipo: "V"|"N", res, kg, precio (Bs/kg), flete (Bs, se descuenta), fleteDesc, origen, obs }
+    pagosMatadero: []   // { id, fecha, monto, forma, nota }
   };
 }
 
